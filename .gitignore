@@ -1,0 +1,32 @@
+# Node modules (all sub-projects)
+**/node_modules/
+
+# Build outputs
+**/dist/
+**/.next/
+**/build/
+
+# Environment files
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Hardhat artifacts & cache
+contracts/artifacts/
+contracts/cache/
+contracts/typechain-types/
+
+# Logs
+**/*.log
+**/npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Lock files (keep package-lock.json but ignore bun.lockb for cross-compat)
+bun.lockb

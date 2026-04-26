@@ -1,0 +1,300 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Dark Navy Theme - Prediction Market */
+    --background: 222 47% 5%;
+    --foreground: 210 40% 98%;
+
+    --card: 222 47% 8%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222 47% 8%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 217 91% 60%;
+    --primary-foreground: 222 47% 5%;
+
+    --secondary: 222 47% 12%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 222 30% 15%;
+    --muted-foreground: 215 20% 55%;
+
+    --accent: 217 91% 60%;
+    --accent-foreground: 222 47% 5%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 40% 98%;
+
+    --success: 142 76% 36%;
+    --success-foreground: 210 40% 98%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 222 47% 5%;
+
+    --border: 222 30% 18%;
+    --input: 222 30% 18%;
+    --ring: 217 91% 60%;
+
+    --radius: 0.75rem;
+
+    /* Custom tokens for prediction market */
+    --glass: 222 47% 10%;
+    --glass-border: 222 30% 20%;
+    --glow-primary: 217 91% 60%;
+    --glow-success: 142 76% 36%;
+    --glow-danger: 0 72% 51%;
+
+    /* Probability colors */
+    --prob-yes: 142 76% 45%;
+    --prob-no: 0 72% 55%;
+
+    /* Gradient stops */
+    --gradient-start: 217 91% 55%;
+    --gradient-end: 199 89% 48%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-muted rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/30;
+  }
+}
+
+@layer components {
+  /* Enhanced Glassmorphism cards */
+  .glass-card {
+    @apply bg-card/40 backdrop-blur-2xl border border-white/10 rounded-xl;
+    background: linear-gradient(135deg, 
+      hsl(var(--card) / 0.4) 0%, 
+      hsl(var(--card) / 0.25) 100%);
+    box-shadow: 
+      0 0 0 1px hsl(var(--foreground) / 0.05),
+      0 8px 32px -8px hsl(var(--background) / 0.6),
+      0 20px 48px -16px hsl(var(--primary) / 0.1),
+      inset 0 1px 0 0 hsl(var(--foreground) / 0.08),
+      inset 0 -1px 0 0 hsl(var(--background) / 0.5);
+  }
+
+  .glass-card-hover {
+    @apply glass-card transition-all duration-500 ease-out;
+    transform: translateZ(0);
+  }
+
+  .glass-card-hover:hover {
+    @apply border-primary/40;
+    background: linear-gradient(135deg, 
+      hsl(var(--card) / 0.5) 0%, 
+      hsl(var(--card) / 0.35) 100%);
+    box-shadow: 
+      0 0 0 1px hsl(var(--primary) / 0.2),
+      0 12px 40px -8px hsl(var(--primary) / 0.2),
+      0 24px 64px -16px hsl(var(--primary) / 0.25),
+      0 0 80px -20px hsl(var(--primary) / 0.3),
+      inset 0 1px 0 0 hsl(var(--foreground) / 0.12),
+      inset 0 -1px 0 0 hsl(var(--background) / 0.6);
+    transform: translateY(-4px) scale(1.01);
+  }
+
+  /* Primary gradient */
+  .gradient-primary {
+    background: linear-gradient(135deg, hsl(var(--gradient-start)), hsl(var(--gradient-end)));
+  }
+
+  .gradient-primary-text {
+    background: linear-gradient(135deg, hsl(var(--gradient-start)), hsl(var(--gradient-end)));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Glow effects */
+  .glow-primary {
+    box-shadow: 0 0 40px -10px hsl(var(--glow-primary) / 0.5);
+  }
+
+  .glow-success {
+    box-shadow: 0 0 20px -5px hsl(var(--glow-success) / 0.5);
+  }
+
+  .glow-danger {
+    box-shadow: 0 0 20px -5px hsl(var(--glow-danger) / 0.5);
+  }
+
+  /* Number styling for financial data */
+  .number-display {
+    @apply font-semibold tabular-nums tracking-tight;
+  }
+
+  .number-lg {
+    @apply text-2xl md:text-3xl font-bold tabular-nums tracking-tight;
+  }
+
+  .number-xl {
+    @apply text-3xl md:text-4xl font-bold tabular-nums tracking-tight;
+  }
+
+  /* Probability bar */
+  .prob-bar {
+    @apply h-1.5 rounded-full overflow-hidden bg-muted;
+  }
+
+  .prob-bar-fill {
+    @apply h-full rounded-full transition-all duration-500;
+    background: linear-gradient(90deg, hsl(var(--prob-yes)), hsl(var(--prob-yes) / 0.7));
+  }
+
+  /* Stats value animation */
+  .stat-value {
+    @apply number-xl gradient-primary-text;
+  }
+
+  /* Trade buttons */
+  .trade-btn-yes {
+    @apply bg-success/10 text-success border border-success/20 hover:bg-success/20 hover:border-success/40 transition-all duration-200;
+  }
+
+  .trade-btn-no {
+    @apply bg-destructive/10 text-destructive border border-destructive/20 hover:bg-destructive/20 hover:border-destructive/40 transition-all duration-200;
+  }
+
+  /* Enhanced Navbar glass */
+  .navbar-glass {
+    @apply bg-background/30 backdrop-blur-2xl border-b border-white/10;
+    background: linear-gradient(180deg, 
+      hsl(var(--background) / 0.6) 0%, 
+      hsl(var(--background) / 0.3) 100%);
+    box-shadow: 
+      0 0 0 1px hsl(var(--foreground) / 0.03),
+      0 4px 24px -4px hsl(var(--background) / 0.8),
+      inset 0 1px 0 0 hsl(var(--foreground) / 0.05);
+  }
+
+  /* Section spacing */
+  .section-spacing {
+    @apply py-16 md:py-24;
+  }
+
+  /* Container */
+  .container-main {
+    @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
+  }
+
+  /* Category badge */
+  .category-badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary border border-primary/20;
+    backdrop-filter: blur(8px);
+    transition: all 0.3s ease;
+  }
+
+  .category-badge:hover {
+    @apply bg-primary/20 border-primary/40;
+    box-shadow: 0 0 20px -5px hsl(var(--primary) / 0.3);
+  }
+
+  /* Status indicators */
+  .status-live {
+    @apply inline-flex items-center gap-1.5 text-success text-sm font-medium;
+  }
+
+  .status-live::before {
+    content: '';
+    @apply w-1.5 h-1.5 rounded-full bg-success animate-pulse;
+  }
+}
+
+@layer utilities {
+  /* Text utilities */
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Animation utilities */
+  .animate-fade-up {
+    animation: fadeUp 0.5s ease-out forwards;
+  }
+
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out forwards;
+  }
+
+  .animate-scale-in {
+    animation: scaleIn 0.2s ease-out forwards;
+  }
+
+  .animate-glow-pulse {
+    animation: glowPulse 2s ease-in-out infinite;
+  }
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes glowPulse {
+  0%, 100% {
+    box-shadow: 0 0 20px -5px hsl(var(--primary) / 0.3);
+  }
+  50% {
+    box-shadow: 0 0 40px -5px hsl(var(--primary) / 0.5);
+  }
+}
