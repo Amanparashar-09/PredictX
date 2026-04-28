@@ -1,231 +1,422 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import dotenv from 'dotenv';
+import { ethers } from 'ethers';
+import * as fs from 'fs';
+import * as path from 'path';
+import { FACTORY_ABI, ORACLE_ABI, MARKET_ABI, USDC_ABI } from './contracts';
+import { OracleService } from './oracle-service';
 
+dotenv.config();
+
+// ─── App setup ────────────────────────────────────────────────────────────────
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// In-memory storage for demo (replace with database in production)
-interface Market {
-  id: string;
-  question: string;
-  expiry: number;
-  totalYes: string;
-  totalNo: string;
-  resolved: boolean;
-  outcomeYes: boolean | null;
-  createdAt: number;
+// ─── Deployed addresses ───────────────────────────────────────────────────────
+interface DeployedAddresses {
+  usdc: string;
+  oracle: string;
+  factory: string;
+  markets: string[];
 }
 
-interface UserPosition {
-  address: string;
-  marketId: string;
-  yesStake: string;
-  noStake: string;
-  claimed: boolean;
+let deployed: DeployedAddresses = { usdc: '', oracle: '', factory: '', markets: [] };
+
+const addressesPath = path.join(__dirname, '..', 'deployed-addresses.json');
+if (fs.existsSync(addressesPath)) {
+  deployed = JSON.parse(fs.readFileSync(addressesPath, 'utf8'));
+  console.log('[Backend] Loaded deployed addresses:', deployed);
+} else {
+  console.warn('[Backend] deployed-addresses.json not found — run the deploy script first');
 }
 
-const markets: Map<string, Market> = new Map();
-const userPositions: Map<string, UserPosition[]> = new Map();
+// ─── Blockchain provider ──────────────────────────────────────────────────────
+const RPC_URL = process.env.RPC_URL || 'http://127.0.0.1:8545';
+const ORACLE_PRIVATE_KEY = process.env.ORACLE_PRIVATE_KEY || '';
+const API_KEY = process.env.API_KEY || 'dev-api-key-change-me-in-production';
 
-// Demo data
-const DEMO_MARKET_ID = 'demo-market-1';
-markets.set(DEMO_MARKET_ID, {
-  id: DEMO_MARKET_ID,
-  question: 'Will Bitcoin exceed $100,000 by end of 2025?',
-  expiry: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days from now
-  totalYes: '50000',
-  totalNo: '30000',
-  resolved: false,
-  outcomeYes: null,
-  createdAt: Date.now(),
-});
+const provider = new ethers.JsonRpcProvider(RPC_URL);
 
-// Routes
+// ─── Oracle service ───────────────────────────────────────────────────────────
+let oracleService: OracleService | null = null;
 
-// Get all markets
-app.get('/api/markets', (req: Request, res: Response) => {
-  const allMarkets = Array.from(markets.values());
-  res.json(allMarkets);
-});
-
-// Get single market
-app.get('/api/markets/:id', (req: Request, res: Response) => {
-  const market = markets.get(req.params.id);
-  if (!market) {
-    return res.status(404).json({ error: 'Market not found' });
+if (ORACLE_PRIVATE_KEY && deployed.oracle) {
+  oracleService = new OracleService(provider, deployed.oracle, ORACLE_PRIVATE_KEY);
+  for (const addr of deployed.markets) {
+    oracleService.addMarket(addr, 0, 'unknown');
   }
-  res.json(market);
-});
+  console.log(`[Oracle] Service ready. Signer: ${oracleService.getSignerAddress()}`);
+} else {
+  console.warn('[Backend] Oracle service disabled — set ORACLE_PRIVATE_KEY in .env');
+}
 
-// Create new market
-app.post('/api/markets', (req: Request, res: Response) => {
-  const { question, expiry } = req.body;
-  
-  if (!question || !expiry) {
-    return res.status(400).json({ error: 'Question and expiry are required' });
+// ─── Contract helpers ─────────────────────────────────────────────────────────
+function getFactory() {
+  if (!deployed.factory) throw new Error('Factory not deployed');
+  return new ethers.Contract(deployed.factory, FACTORY_ABI, provider);
+}
+
+function getMarket(address: string) {
+  return new ethers.Contract(address, MARKET_ABI, provider);
+}
+
+function getUSDC() {
+  if (!deployed.usdc) throw new Error('USDC not deployed');
+  return new ethers.Contract(deployed.usdc, USDC_ABI, provider);
+}
+
+// ─── In-memory market address cache (seeded from deployed-addresses.json) ────
+const marketAddresses: Set<string> = new Set(
+  (deployed.markets || []).map((a: string) => a.toLowerCase())
+);
+
+// ─── Track which block we last scanned for events ────────────────────────────
+let lastScannedBlock = 0;
+
+/**
+ * Register a market address into the in-memory set.
+ * Called on startup (backfill) and whenever a new market event is found.
+ */
+function registerMarket(address: string, expiry: number, question: string) {
+  const addr = address.toLowerCase();
+  if (!marketAddresses.has(addr)) {
+    marketAddresses.add(addr);
+    if (oracleService) oracleService.addMarket(address, expiry, question);
+    console.log(`[Market] Registered: ${address} — "${question}"`);
   }
+}
 
-  const id = `market-${Date.now()}`;
-  const market: Market = {
-    id,
-    question,
-    expiry,
-    totalYes: '0',
-    totalNo: '0',
-    resolved: false,
-    outcomeYes: null,
-    createdAt: Date.now(),
-  };
+/**
+ * Backfill: query all MarketCreated events from block 0 → latest.
+ * HTTP JSON-RPC providers don't support factory.on() websocket listeners,
+ * so we poll with queryFilter instead.
+ */
+async function syncMarkets() {
+  if (!deployed.factory) return;
+  try {
+    const factory = getFactory();
+    const latest = await provider.getBlockNumber();
+    const from = lastScannedBlock;
 
-  markets.set(id, market);
-  res.status(201).json(market);
-});
-
-// Get user positions for a market
-app.get('/api/markets/:id/positions/:address', (req: Request, res: Response) => {
-  const { id, address } = req.params;
-  const positions = userPositions.get(address.toLowerCase()) || [];
-  const marketPositions = positions.filter(p => p.marketId === id);
-  res.json(marketPositions);
-});
-
-// Place a bet (buy YES or NO)
-app.post('/api/markets/:id/bet', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const { address, side, amount } = req.body;
-
-  if (!address || !side || !amount) {
-    return res.status(400).json({ error: 'Address, side, and amount are required' });
-  }
-
-  const market = markets.get(id);
-  if (!market) {
-    return res.status(404).json({ error: 'Market not found' });
-  }
-
-  if (Date.now() > market.expiry) {
-    return res.status(400).json({ error: 'Market has expired' });
-  }
-
-  if (market.resolved) {
-    return res.status(400).json({ error: 'Market is already resolved' });
-  }
-
-  // Update market totals
-  if (side === 'yes') {
-    market.totalYes = (BigInt(market.totalYes) + BigInt(amount)).toString();
-  } else {
-    market.totalNo = (BigInt(market.totalNo) + BigInt(amount)).toString();
-  }
-  markets.set(id, market);
-
-  // Update user position
-  const userKey = address.toLowerCase();
-  let positions = userPositions.get(userKey) || [];
-  const existingPosition = positions.find(p => p.marketId === id);
-
-  if (existingPosition) {
-    if (side === 'yes') {
-      existingPosition.yesStake = (BigInt(existingPosition.yesStake) + BigInt(amount)).toString();
-    } else {
-      existingPosition.noStake = (BigInt(existingPosition.noStake) + BigInt(amount)).toString();
+    // Guard: skip if no new blocks since last scan
+    if (from > latest) {
+      return;
     }
-  } else {
-    const newPosition: UserPosition = {
-      address: userKey,
-      marketId: id,
-      yesStake: side === 'yes' ? amount : '0',
-      noStake: side === 'no' ? amount : '0',
-      claimed: false,
-    };
-    positions.push(newPosition);
+
+    console.log(`[Sync] Scanning blocks ${from} → ${latest}…`);
+    const events = await factory.queryFilter(
+      factory.filters.MarketCreated(),
+      from,
+      latest
+    );
+    for (const ev of events) {
+      const [market, expiry, question] = (ev as any).args;
+      registerMarket(market, Number(expiry), question as string);
+    }
+    lastScannedBlock = latest + 1;
+    if (events.length > 0) {
+      console.log(`[Sync] Found ${events.length} new market(s) up to block ${latest}`);
+    }
+  } catch (err) {
+    // Log the actual error so we can diagnose it
+    console.error('[Sync] queryFilter error:', (err as any)?.message || err);
   }
+}
 
-  userPositions.set(userKey, positions);
+// Backfill all historical events on startup, then poll every 30s
+syncMarkets()
+  .then(() => console.log(`[Sync] Initial sync done. Tracking ${marketAddresses.size} market(s).`))
+  .catch(console.error);
 
-  res.json({ success: true, market });
+setInterval(() => syncMarkets().catch(console.error), 30_000);
+
+// Oracle check every 60 seconds
+setInterval(async () => {
+  if (oracleService) {
+    await oracleService.checkExpiredMarkets().catch(console.error);
+  }
+}, 60_000);
+
+// ─── Auth middleware ──────────────────────────────────────────────────────────
+function requireApiKey(req: Request, res: Response, next: NextFunction) {
+  const key = req.headers['x-api-key'] || req.body?.apiKey;
+  if (key !== API_KEY) {
+    res.status(401).json({ error: 'Unauthorized: invalid API key' });
+    return;
+  }
+  next();
+}
+
+// ─── Utility ──────────────────────────────────────────────────────────────────
+function isAddress(s: string): boolean {
+  return /^0x[0-9a-fA-F]{40}$/.test(s);
+}
+
+// ─── Routes ───────────────────────────────────────────────────────────────────
+
+/** GET /api/config — return deployed contract addresses for frontend */
+app.get('/api/config', (_req, res) => {
+  res.json({
+    usdc: deployed.usdc || null,
+    oracle: deployed.oracle || null,
+    factory: deployed.factory || null,
+    chainId: 31337,
+    rpcUrl: RPC_URL,
+  });
 });
 
-// Resolve market (oracle function)
-app.post('/api/markets/:id/resolve', (req: Request, res: Response) => {
-  const { id } = req.params;
+/**
+ * POST /api/markets/register — immediately register a market address.
+ * Called by the frontend right after factory.createMarket() succeeds,
+ * so users don't have to wait for the 30s poll cycle.
+ */
+app.post('/api/markets/register', async (req, res) => {
+  const { address } = req.body;
+  if (!address || !isAddress(address)) {
+    res.status(400).json({ error: 'Invalid or missing market address' });
+    return;
+  }
+  try {
+    // Verify the contract exists and is a valid market
+    const market = getMarket(address);
+    const [question, expiry] = await Promise.all([
+      market.question(),
+      market.expiry(),
+    ]);
+    registerMarket(address, Number(expiry), question);
+    res.json({ success: true, address, question, trackedMarkets: marketAddresses.size });
+  } catch (err: any) {
+    res.status(500).json({ error: `Could not verify market: ${err.message}` });
+  }
+});
+
+/** GET /api/markets/sync — force a full rescan from block 0 and return all markets */
+app.get('/api/markets/sync', async (_req, res) => {
+  try {
+    // Reset and do a full rescan from genesis
+    lastScannedBlock = 0;
+    await syncMarkets();
+    res.json({ success: true, trackedMarkets: marketAddresses.size, markets: Array.from(marketAddresses) });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** GET /api/markets — list all known markets with on-chain state */
+app.get('/api/markets', async (_req, res) => {
+  try {
+    // Always do a fresh scan so newly created markets aren't missed
+    await syncMarkets();
+
+    const markets = await Promise.all(
+      Array.from(marketAddresses).map(async (addr) => {
+        try {
+          const market = getMarket(addr);
+          const [
+            question,
+            expiry,
+            resolved,
+            outcomeYes,
+            totalYes,
+            totalNo,
+          ] = await Promise.all([
+            market.question(),
+            market.expiry(),
+            market.resolved(),
+            market.outcomeYes(),
+            market.totalYes(),
+            market.totalNo(),
+          ]);
+          return {
+            address: addr,
+            question,
+            expiry: Number(expiry),
+            resolved,
+            outcomeYes,
+            totalYes: totalYes.toString(),
+            totalNo: totalNo.toString(),
+            pool: (BigInt(totalYes) + BigInt(totalNo)).toString(),
+          };
+        } catch (err) {
+          console.error(`[Market] Failed to read ${addr}:`, (err as any)?.message);
+          return null;
+        }
+      })
+    );
+    res.json(markets.filter(Boolean));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** GET /api/markets/:address — get single market on-chain state */
+app.get('/api/markets/:address', async (req, res) => {
+  const { address } = req.params;
+  if (!isAddress(address)) {
+    res.status(400).json({ error: 'Invalid market address' });
+    return;
+  }
+  try {
+    const market = getMarket(address);
+    const [
+      question,
+      expiry,
+      resolved,
+      outcomeYes,
+      totalYes,
+      totalNo,
+      collateral,
+      oracleAddr,
+    ] = await Promise.all([
+      market.question(),
+      market.expiry(),
+      market.resolved(),
+      market.outcomeYes(),
+      market.totalYes(),
+      market.totalNo(),
+      market.collateral(),
+      market.oracle(),
+    ]);
+
+    res.json({
+      address,
+      question,
+      expiry: Number(expiry),
+      resolved,
+      outcomeYes,
+      totalYes: totalYes.toString(),
+      totalNo: totalNo.toString(),
+      pool: (BigInt(totalYes) + BigInt(totalNo)).toString(),
+      collateral,
+      oracle: oracleAddr,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** GET /api/markets/:address/position/:userAddress — user stake info */
+app.get('/api/markets/:address/position/:userAddress', async (req, res) => {
+  const { address, userAddress } = req.params;
+  if (!isAddress(address) || !isAddress(userAddress)) {
+    res.status(400).json({ error: 'Invalid address' });
+    return;
+  }
+  try {
+    const market = getMarket(address);
+    const [[yesStake, noStake], claimed, potentialPayout] = await Promise.all([
+      market.getUserStake(userAddress),
+      market.claimed(userAddress),
+      market.getPotentialPayout(userAddress),
+    ]);
+    res.json({
+      marketAddress: address,
+      userAddress,
+      yesStake: yesStake.toString(),
+      noStake: noStake.toString(),
+      claimed,
+      potentialPayout: potentialPayout.toString(),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** GET /api/usdc/balance/:userAddress — USDC balance for a user */
+app.get('/api/usdc/balance/:userAddress', async (req, res) => {
+  const { userAddress } = req.params;
+  if (!isAddress(userAddress)) {
+    res.status(400).json({ error: 'Invalid address' });
+    return;
+  }
+  try {
+    const usdc = getUSDC();
+    const balance = await usdc.balanceOf(userAddress);
+    res.json({ address: userAddress, balance: balance.toString(), decimals: 6 });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/markets/:address/resolve — resolve a market via oracle
+ * Secured with X-Api-Key header or body.apiKey
+ * Body: { outcomeYes: boolean }
+ */
+app.post('/api/markets/:address/resolve', requireApiKey, async (req, res) => {
+  const { address } = req.params;
   const { outcomeYes } = req.body;
 
-  const market = markets.get(id);
-  if (!market) {
-    return res.status(404).json({ error: 'Market not found' });
+  if (!isAddress(address)) {
+    res.status(400).json({ error: 'Invalid market address' });
+    return;
+  }
+  if (typeof outcomeYes !== 'boolean') {
+    res.status(400).json({ error: 'outcomeYes must be a boolean' });
+    return;
+  }
+  if (!oracleService) {
+    res.status(503).json({ error: 'Oracle service not configured — set ORACLE_PRIVATE_KEY' });
+    return;
   }
 
-  if (market.resolved) {
-    return res.status(400).json({ error: 'Market already resolved' });
+  try {
+    const receipt = await oracleService.resolveMarket(address, outcomeYes);
+    res.json({
+      success: true,
+      marketAddress: address,
+      outcomeYes,
+      txHash: receipt?.hash,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
-
-  market.resolved = true;
-  market.outcomeYes = outcomeYes;
-  markets.set(id, market);
-
-  res.json({ success: true, market });
 });
 
-// Claim winnings
-app.post('/api/markets/:id/claim', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const { address } = req.body;
-
-  if (!address) {
-    return res.status(400).json({ error: 'Address is required' });
+/**
+ * GET /api/oracle/expired — list expired unresolved markets
+ */
+app.get('/api/oracle/expired', requireApiKey, async (_req, res) => {
+  if (!oracleService) {
+    res.status(503).json({ error: 'Oracle service not configured' });
+    return;
   }
-
-  const market = markets.get(id);
-  if (!market) {
-    return res.status(404).json({ error: 'Market not found' });
+  try {
+    const expired = await oracleService.checkExpiredMarkets();
+    res.json({ expiredMarkets: expired });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
-
-  if (!market.resolved) {
-    return res.status(400).json({ error: 'Market not resolved' });
-  }
-
-  const userKey = address.toLowerCase();
-  const positions = userPositions.get(userKey) || [];
-  const position = positions.find(p => p.marketId === id);
-
-  if (!position) {
-    return res.status(400).json({ error: 'No position found' });
-  }
-
-  if (position.claimed) {
-    return res.status(400).json({ error: 'Already claimed' });
-  }
-
-  // Calculate payout
-  const totalPool = BigInt(market.totalYes) + BigInt(market.totalNo);
-  let payout = '0';
-
-  if (market.outcomeYes && position.yesStake !== '0') {
-    payout = (BigInt(position.yesStake) * totalPool / BigInt(market.totalYes)).toString();
-  } else if (!market.outcomeYes && position.noStake !== '0') {
-    payout = (BigInt(position.noStake) * totalPool / BigInt(market.totalNo)).toString();
-  }
-
-  position.claimed = true;
-  userPositions.set(userKey, positions);
-
-  res.json({ success: true, payout });
 });
 
-// Health check
-app.get('/health', (req: Request, res: Response) => {
-  res.json({ status: 'ok', timestamp: Date.now() });
+/** GET /health */
+app.get('/health', async (_req, res) => {
+  let blockNumber: number | null = null;
+  try {
+    blockNumber = await provider.getBlockNumber();
+  } catch {
+    // provider may not be available
+  }
+  res.json({
+    status: 'ok',
+    timestamp: Date.now(),
+    blockNumber,
+    oracleReady: !!oracleService,
+    contractsDeployed: !!deployed.factory,
+    trackedMarkets: marketAddresses.size,
+  });
 });
 
-// Start server
+// ─── Start server ─────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
-  console.log(`Prediction Market Backend running on port ${PORT}`);
-  console.log(`Demo market available at: http://localhost:${PORT}/api/markets/${DEMO_MARKET_ID}`);
+  console.log(`\n🚀 Prediction Market Backend running on port ${PORT}`);
+  console.log(`   Health:  http://localhost:${PORT}/health`);
+  console.log(`   Config:  http://localhost:${PORT}/api/config`);
+  console.log(`   Markets: http://localhost:${PORT}/api/markets\n`);
 });
 
 export default app;

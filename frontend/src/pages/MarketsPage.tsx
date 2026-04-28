@@ -1,52 +1,72 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Search, Filter, TrendingUp, Clock, Percent } from 'lucide-react';
-import { MarketCard, } from '@/components/MarketCard';
+import { Search, Filter, TrendingUp, Clock, Percent, PlusCircle, RefreshCw, AlertCircle } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { MarketCard } from '@/components/MarketCard';
 import { MarketCardSkeleton } from '@/components/SkeletonLoader';
-import { mockMarkets, categories, type Market } from '@/lib/mock-data';
+import { CATEGORIES, fetchMarkets, type Market } from '@/lib/mock-data';
 import { Button } from '@/components/ui/button';
 
 type SortOption = 'volume' | 'probability' | 'ending';
 
 export default function MarketsPage() {
+  const [markets, setMarkets] = useState<Market[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [sortBy, setSortBy] = useState<SortOption>('volume');
   const [searchQuery, setSearchQuery] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [lastRefresh, setLastRefresh] = useState<number>(0);
+
+  // Load markets from backend/chain
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    // On explicit refresh (lastRefresh changed by button), do a full chain rescan
+    const url = lastRefresh > 0
+      ? `http://localhost:3001/api/markets/sync`
+      : `http://localhost:3001/api/markets`;
+
+    // fetchMarkets from mock-data uses the /api/markets endpoint, 
+    // but for refresh we hit /sync directly then fetch the updated list
+    const doFetch = async () => {
+      if (lastRefresh > 0) {
+        // Force backend to rescan all blocks, then get the full list
+        await fetch(`http://localhost:3001/api/markets/sync`);
+      }
+      const data = await fetchMarkets();
+      if (!cancelled) { setMarkets(data); setLoading(false); }
+    };
+
+    doFetch().catch((err) => {
+      if (!cancelled) { setError(err.message); setLoading(false); }
+    });
+
+    return () => { cancelled = true; };
+  }, [lastRefresh]);
 
   const filteredMarkets = useMemo(() => {
-    let markets = [...mockMarkets];
-
-    // Filter by category
+    let list = [...markets];
     if (selectedCategory !== 'All') {
-      markets = markets.filter((m) => m.category === selectedCategory);
+      list = list.filter((m) => m.category === selectedCategory);
     }
-
-    // Filter by search
     if (searchQuery) {
-      markets = markets.filter((m) =>
+      list = list.filter((m) =>
         m.question.toLowerCase().includes(searchQuery.toLowerCase())
       );
     }
-
-    // Sort
     switch (sortBy) {
-      case 'volume':
-        markets.sort((a, b) => b.volume - a.volume);
-        break;
-      case 'probability':
-        markets.sort((a, b) => b.yesPrice - a.yesPrice);
-        break;
-      case 'ending':
-        markets.sort((a, b) => new Date(a.endDate).getTime() - new Date(b.endDate).getTime());
-        break;
+      case 'volume':      list.sort((a, b) => b.volume - a.volume); break;
+      case 'probability': list.sort((a, b) => b.yesPrice - a.yesPrice); break;
+      case 'ending':      list.sort((a, b) => new Date(a.endDate).getTime() - new Date(b.endDate).getTime()); break;
     }
-
-    return markets;
-  }, [selectedCategory, sortBy, searchQuery]);
+    return list;
+  }, [markets, selectedCategory, sortBy, searchQuery]);
 
   const sortOptions = [
-    { value: 'volume' as SortOption, label: 'Volume', icon: TrendingUp },
+    { value: 'volume' as SortOption, label: 'Volume',      icon: TrendingUp },
     { value: 'probability' as SortOption, label: 'Probability', icon: Percent },
     { value: 'ending' as SortOption, label: 'Ending Soon', icon: Clock },
   ];
@@ -59,10 +79,28 @@ export default function MarketsPage() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="mb-8"
+          className="flex items-start justify-between mb-8"
         >
-          <h1 className="text-3xl md:text-4xl font-bold mb-2">Markets</h1>
-          <p className="text-muted-foreground">Browse and trade on prediction markets</p>
+          <div>
+            <h1 className="text-3xl md:text-4xl font-bold mb-2">Markets</h1>
+            <p className="text-muted-foreground">Live on-chain prediction markets</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setLastRefresh(Date.now())}
+              disabled={loading}
+              className="p-2 rounded-xl text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+              title="Refresh"
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+            <Link to="/create">
+              <Button variant="gradient" size="sm">
+                <PlusCircle className="h-4 w-4 mr-2" />
+                Create
+              </Button>
+            </Link>
+          </div>
         </motion.div>
 
         {/* Search & Filters */}
@@ -85,46 +123,11 @@ export default function MarketsPage() {
                 background: 'linear-gradient(135deg, hsl(var(--secondary) / 0.4), hsl(var(--secondary) / 0.25))',
                 backdropFilter: 'blur(12px)',
                 border: '1px solid hsl(var(--border) / 0.5)',
-                boxShadow: '0 0 0 1px hsl(var(--foreground) / 0.03), 0 4px 16px -4px hsl(var(--background) / 0.5), inset 0 1px 0 0 hsl(var(--foreground) / 0.05)',
+                boxShadow: '0 0 0 1px hsl(var(--foreground) / 0.03), 0 4px 16px -4px hsl(var(--background) / 0.5)',
               }}
-              onFocus={(e) => {
-                e.target.style.borderColor = 'hsl(var(--primary) / 0.5)';
-                e.target.style.boxShadow = '0 0 0 1px hsl(var(--primary) / 0.2), 0 4px 20px -4px hsl(var(--primary) / 0.2), 0 0 40px -10px hsl(var(--primary) / 0.15)';
-              }}
-              onBlur={(e) => {
-                e.target.style.borderColor = 'hsl(var(--border) / 0.5)';
-                e.target.style.boxShadow = '0 0 0 1px hsl(var(--foreground) / 0.03), 0 4px 16px -4px hsl(var(--background) / 0.5), inset 0 1px 0 0 hsl(var(--foreground) / 0.05)';
-              }}
+              onFocus={(e) => { e.target.style.borderColor = 'hsl(var(--primary) / 0.5)'; }}
+              onBlur={(e) => { e.target.style.borderColor = 'hsl(var(--border) / 0.5)'; }}
             />
-          </div>
-
-          {/* Categories */}
-          <div className="flex flex-wrap gap-2">
-            {categories.map((category) => {
-              const isActive = selectedCategory === category;
-              return (
-                <button
-                  key={category}
-                  onClick={() => setSelectedCategory(category)}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-300 relative overflow-hidden group/cat ${
-                    isActive
-                      ? 'text-primary-foreground shadow-lg shadow-primary/25 border border-primary/20'
-                      : 'text-muted-foreground hover:text-foreground border border-transparent hover:border-primary/20'
-                  }`}
-                  style={isActive ? {
-                    background: 'linear-gradient(135deg, hsl(var(--primary) / 0.9), hsl(var(--primary) / 0.7))',
-                  } : {
-                    background: 'linear-gradient(135deg, hsl(var(--secondary) / 0.4), hsl(var(--secondary) / 0.25))',
-                    backdropFilter: 'blur(8px)',
-                  }}
-                >
-                  {!isActive && (
-                    <div className="absolute inset-0 bg-gradient-to-r from-primary/10 via-transparent to-primary/10 opacity-0 group-hover/cat:opacity-100 transition-opacity duration-300" />
-                  )}
-                  <span className="relative z-10">{category}</span>
-                </button>
-              );
-            })}
           </div>
 
           {/* Sort Options */}
@@ -139,23 +142,20 @@ export default function MarketsPage() {
                   <button
                     key={option.value}
                     onClick={() => setSortBy(option.value)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-300 relative overflow-hidden group/sort ${
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-300 border ${
                       isActive
-                        ? 'text-primary border border-primary/20'
-                        : 'text-muted-foreground hover:text-foreground border border-transparent hover:border-primary/10'
+                        ? 'text-primary border-primary/20'
+                        : 'text-muted-foreground hover:text-foreground border-transparent hover:border-primary/10'
                     }`}
                     style={{
-                      background: isActive 
+                      background: isActive
                         ? 'linear-gradient(135deg, hsl(var(--primary) / 0.15), hsl(var(--primary) / 0.08))'
                         : 'linear-gradient(135deg, hsl(var(--secondary) / 0.3), hsl(var(--secondary) / 0.15))',
                       backdropFilter: 'blur(8px)',
                     }}
                   >
-                    {!isActive && (
-                      <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-transparent to-primary/5 opacity-0 group-hover/sort:opacity-100 transition-opacity duration-300" />
-                    )}
-                    <Icon className="h-3.5 w-3.5 relative z-10" />
-                    <span className="relative z-10">{option.label}</span>
+                    <Icon className="h-3.5 w-3.5" />
+                    <span>{option.label}</span>
                   </button>
                 );
               })}
@@ -163,19 +163,38 @@ export default function MarketsPage() {
           </div>
         </motion.div>
 
-        {/* Results Count */}
-        <div className="mb-6">
-          <p className="text-sm text-muted-foreground">
-            {filteredMarkets.length} market{filteredMarkets.length !== 1 ? 's' : ''} found
-          </p>
-        </div>
+        {/* Error */}
+        {error && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="flex items-start gap-3 p-4 mb-6 bg-destructive/10 border border-destructive/20 rounded-xl"
+          >
+            <AlertCircle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-destructive">Could not load markets</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{error}</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Make sure the backend is running on <code className="bg-secondary/50 px-1 rounded">http://localhost:3001</code>
+              </p>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Results count */}
+        {!loading && !error && (
+          <div className="mb-6">
+            <p className="text-sm text-muted-foreground">
+              {filteredMarkets.length} market{filteredMarkets.length !== 1 ? 's' : ''} found
+              <span className="ml-2 text-xs text-primary">● Live on-chain</span>
+            </p>
+          </div>
+        )}
 
         {/* Markets Grid */}
-        {isLoading ? (
+        {loading ? (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <MarketCardSkeleton key={i} />
-            ))}
+            {Array.from({ length: 6 }).map((_, i) => <MarketCardSkeleton key={i} />)}
           </div>
         ) : filteredMarkets.length > 0 ? (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -183,32 +202,36 @@ export default function MarketsPage() {
               <MarketCard key={market.id} market={market} index={index} />
             ))}
           </div>
-        ) : (
+        ) : !error ? (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="text-center py-16"
+            className="text-center py-20"
           >
-            <div className="glass-card inline-block p-8">
-              <div className="h-16 w-16 rounded-full bg-muted mx-auto mb-4 flex items-center justify-center">
-                <Search className="h-8 w-8 text-muted-foreground" />
+            <div className="glass-card inline-block p-10">
+              <div className="h-16 w-16 rounded-full bg-primary/10 mx-auto mb-5 flex items-center justify-center">
+                <PlusCircle className="h-8 w-8 text-primary" />
               </div>
-              <h3 className="text-lg font-semibold mb-2">No markets found</h3>
-              <p className="text-muted-foreground mb-4">
-                Try adjusting your search or filters
+              <h3 className="text-xl font-semibold mb-2">No markets yet</h3>
+              <p className="text-muted-foreground mb-6">
+                {searchQuery ? 'No markets match your search.' : 'Be the first to create a prediction market!'}
               </p>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setSearchQuery('');
-                  setSelectedCategory('All');
-                }}
-              >
-                Clear Filters
-              </Button>
+              {!searchQuery && (
+                <Link to="/create">
+                  <Button variant="gradient">
+                    Create First Market
+                    <PlusCircle className="h-4 w-4 ml-2" />
+                  </Button>
+                </Link>
+              )}
+              {searchQuery && (
+                <Button variant="outline" onClick={() => setSearchQuery('')}>
+                  Clear Search
+                </Button>
+              )}
             </div>
           </motion.div>
-        )}
+        ) : null}
       </div>
     </div>
   );

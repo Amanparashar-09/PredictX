@@ -10,6 +10,7 @@ import MarketsPage from "./pages/MarketsPage";
 import MarketDetailPage from "./pages/MarketDetailPage";
 import PortfolioPage from "./pages/PortfolioPage";
 import LeaderboardPage from "./pages/LeaderboardPage";
+import CreatePredictionPage from "./pages/CreatePredictionPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -26,6 +27,7 @@ const App = () => (
             <Route path="/" element={<LandingPage />} />
             <Route path="/markets" element={<MarketsPage />} />
             <Route path="/market/:id" element={<MarketDetailPage />} />
+            <Route path="/create" element={<CreatePredictionPage />} />
             <Route path="/portfolio" element={<PortfolioPage />} />
             <Route path="/leaderboard" element={<LeaderboardPage />} />
             <Route path="*" element={<NotFound />} />

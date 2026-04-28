@@ -1,14 +1,15 @@
 import { Link, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { BarChart3, Trophy, Briefcase, Menu, X } from 'lucide-react';
+import { BarChart3, Trophy, Briefcase, PlusCircle, Menu, X } from 'lucide-react';
 import { useState } from 'react';
 import { WalletButton } from './WalletButton';
 import { Button } from './ui/button';
 
 const navLinks = [
-  { path: '/markets', label: 'Markets', icon: BarChart3 },
+  { path: '/markets',  label: 'Markets',    icon: BarChart3 },
+  { path: '/create',   label: 'Create',     icon: PlusCircle },
   { path: '/leaderboard', label: 'Leaderboard', icon: Trophy },
-  { path: '/portfolio', label: 'Portfolio', icon: Briefcase },
+  { path: '/portfolio', label: 'Portfolio',  icon: Briefcase },
 ];
 
 export function Navbar() {

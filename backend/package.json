@@ -1,13 +1,13 @@
 {
   "name": "prediction-market-backend",
   "version": "1.0.0",
-  "description": "Backend API for Prediction Market",
+  "description": "Backend API for Prediction Market — blockchain-connected via ethers.js",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "echo \"No tests specified\""
+    "test": "echo \"No backend tests specified\""
   },
   "keywords": ["blockchain", "prediction-market", "ethereum"],
   "author": "",
@@ -15,6 +15,7 @@
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
+    "ethers": "^6.16.0",
     "express": "^4.21.0"
   },
   "devDependencies": {
